@@ -92,18 +92,63 @@ class WSDLInterpreter
      * @access private
      */
     private $_servicePHPSources = array();
+
+    /**
+     * Namespace for the output.
+     * @var array
+     * @access private
+     */
+    private $_OutputNamespace;
+
+    /**
+     * Output indent.
+     * @var string
+     * @access private
+     */
+    private $_OutputIndent = "\t";
+
+    /**
+     * All in one single file.
+     */
+    const AUTOLOADER_SINGLE_FILE = 'SINGLE_FILE';
+    /**
+     * Custom structure.
+     */
+    const AUTOLOADER_WSDLI = 'WSDLI';
+    /**
+     * PSR4 according to http://www.php-fig.org/psr/psr-0/
+     */
+    const AUTOLOADER_PSR4 = 'PSR4';
+
+    /**
+     * Defines the autoloader structure to use for the output.
+     * @var string
+     */
+    private $_outputAutoloaderStructure = self::AUTOLOADER_PSR4;
+
+
+    /**
+     * If enabled the arguments for the methods are explicitly defined.
+     * @var bool
+     */
+    private $_outputExpandMethodArguments = false;
     
     /**
      * Parses the target wsdl and loads the interpretation into object members
      * 
      * @param string $wsdl  the URI of the wsdl to interpret
+     * @param string $namespace  the Namespace for the output. NULL will disable the
+     *                      namespace.
+     * @param string $autoloader  the autoloader structure for the output.
      * @throws WSDLInterpreterException Container for all WSDL interpretation problems
      * @todo Create plug in model to handle extendability of WSDL files
      */
-    public function __construct($wsdl) 
+    public function __construct($wsdl, $namespace = 'WSDLI', $autoloader = self::AUTOLOADER_PSR4)
     {
         try {
             $this->_wsdl = $wsdl;
+            $this->_OutputNamespace = $namespace;
+            $this->_outputAutoloaderStructure = $autoloader;
             $this->_client = new SoapClient($this->_wsdl);
             
             $this->_dom = new DOMDocument();
@@ -163,9 +208,83 @@ class WSDLInterpreter
         } catch (Exception $e) {
             throw new WSDLInterpreterException("Error interpreting WSDL document (".$e->getMessage().")");
         }
-       
-        $this->_loadClasses();
-        $this->_loadServices();
+    }
+
+    /**
+     * Set the output namespace.
+     *
+     * Setting this to NULL will disable the namespace.
+     *
+     * @param string $wsdl  the Namespace for the output.
+     */
+    public function setOutputNamespace($namespace) {
+      $this->_OutputNamespace = $namespace;
+    }
+
+    /**
+     * Get the output namespace.
+     *
+     * @return string|NULL the Namespace for the output.
+     */
+    public function getOutputNamespace() {
+      return $this->_OutputNamespace;
+    }
+
+    /**
+     * Set the output indent.
+     *
+     * @param string $indent  the indent for the output.
+     */
+    public function setOutputIndent($indent) {
+      $this->_OutputIndent = $indent;
+    }
+
+    /**
+     * Get the output indent.
+     *
+     * @return string the indent for the output.
+     */
+    public function getOutputIndent() {
+      return $this->_OutputIndent;
+    }
+
+    /**
+     * Set the autoloader structure.
+     *
+     * @param string $autoloader  the autloader structure to use. See class
+     *                            constants for available options.
+     */
+    public function setAutoloader($autoloader) {
+      $this->_outputAutoloaderStructure = $autoloader;
+    }
+
+    /**
+     * Get the autoloader structure.
+     *
+     * @return string the autloader structure.
+     */
+    public function getAutoloader($namespace) {
+      $this->_outputAutoloaderStructure;
+    }
+
+    /**
+     * Set the expand method arguments flag.
+     *
+     * If enabled the method arugments are explicitly declared.
+     *
+     * @param bool $expandMethodArguments
+     */
+    public function setExpandMethodArguments($expandMethodArguments) {
+      $this->_outputExpandMethodArguments = (bool) $expandMethodArguments;
+    }
+
+    /**
+     * Get the expand method arguments flag.
+     *
+     * @return bool
+     */
+    public function getExpandMethodArguments($namespace) {
+      $this->_outputExpandMethodArguments;
     }
 
     /**
@@ -285,7 +404,7 @@ class WSDLInterpreter
             
             $sources[$class->getAttribute("validatedName")] = array(
                 "extends" => $classExtension,
-                "source" => $this->_generateClassPHP($class)
+                "source" => $this->_generateClassPHP($class, 'Types')
             );
         }
         
@@ -316,14 +435,19 @@ class WSDLInterpreter
      * convenience, however, this will be available as $myClass->MYVARIABLE.
      * 
      * @param DOMElement $class the interpreted WSDL message type node
+     * @param string $subNamespace the subnamespace for this class.
      * @return string the php source code for the message type class
      * 
      * @access private
      * @todo Include any applicable annotation from WSDL
      */
-    private function _generateClassPHP($class) 
+    private function _generateClassPHP($class, $subNamespace = '')
     {
-        $return = 'namespace WSDLI;'."\n\n";
+        $return = '';
+        if (!is_null($this->_OutputNamespace)) {
+          $subNamespace = ((strpos($subNamespace, '\\') !== 0) ? '\\' : '') . $subNamespace;
+          $return .= 'namespace ' . $this->_OutputNamespace . $subNamespace . ';' . "\n\n";
+        }
         $return .= '/**'."\n";
         $return .= ' * '.$class->getAttribute("validatedName")."\n";
         $return .= ' */'."\n";
@@ -336,37 +460,37 @@ class WSDLInterpreter
     
         $properties = $class->getElementsByTagName("entry");
         foreach ($properties as $property) {
-            $return .= "\t/**\n"
-                     . "\t * @access public\n"
-                     . "\t * @var ".$property->getAttribute("type")."\n"
-                     . "\t */\n"
-                     . "\t".'public $'.$property->getAttribute("validatedName").";\n";
+            $return .= $this->_OutputIndent . "/**\n"
+                     . $this->_OutputIndent . " * @access public\n"
+                     . $this->_OutputIndent . " * @var ".$property->getAttribute("type")."\n"
+                     . $this->_OutputIndent . " */\n"
+                     . $this->_OutputIndent .'public $'.$property->getAttribute("validatedName").";\n";
         }
     
         $extraParams = false;
-        $paramMapReturn = "\t".'private $_parameterMap = array ('."\n";
+        $paramMapReturn = $this->_OutputIndent .'private $_parameterMap = array ('."\n";
         $properties = $class->getElementsByTagName("entry");
         foreach ($properties as $property) {
             if ($property->getAttribute("name") != $property->getAttribute("validatedName")) {
                 $extraParams = true;
-                $paramMapReturn .= "\t\t".'"'.$property->getAttribute("name").
+                $paramMapReturn .= $this->_OutputIndent . $this->_OutputIndent . '"'.$property->getAttribute("name").
                     '" => "'.$property->getAttribute("validatedName").'",'."\n";
             }
         }
-        $paramMapReturn .= "\t".');'."\n";
-        $paramMapReturn .= "\t".'/**'."\n";
-        $paramMapReturn .= "\t".' * Provided for setting non-php-standard named variables'."\n";
-        $paramMapReturn .= "\t".' * @param $var Variable name to set'."\n";
-        $paramMapReturn .= "\t".' * @param $value Value to set'."\n";
-        $paramMapReturn .= "\t".' */'."\n";
-        $paramMapReturn .= "\t".'public function __set($var, $value) '.
+        $paramMapReturn .= $this->_OutputIndent .');'."\n";
+        $paramMapReturn .= $this->_OutputIndent .'/**'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * Provided for setting non-php-standard named variables'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * @param $var Variable name to set'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * @param $value Value to set'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' */'."\n";
+        $paramMapReturn .= $this->_OutputIndent .'public function __set($var, $value) '.
             '{ $this->{$this->_parameterMap[$var]} = $value; }'."\n";
-        $paramMapReturn .= "\t".'/**'."\n";
-        $paramMapReturn .= "\t".' * Provided for getting non-php-standard named variables'."\n";
-        $paramMapReturn .= "\t".' * @param $var Variable name to get'."\n";
-        $paramMapReturn .= "\t".' * @return mixed Variable value'."\n";
-        $paramMapReturn .= "\t".' */'."\n";
-        $paramMapReturn .= "\t".'public function __get($var) '.
+        $paramMapReturn .= $this->_OutputIndent .'/**'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * Provided for getting non-php-standard named variables'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * @param $var Variable name to get'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' * @return mixed Variable value'."\n";
+        $paramMapReturn .= $this->_OutputIndent .' */'."\n";
+        $paramMapReturn .= $this->_OutputIndent .'public function __get($var) '.
             '{ return $this->{$this->_parameterMap[$var]}; }'."\n";
         
         if ($extraParams) {
@@ -422,9 +546,12 @@ class WSDLInterpreter
      * @access private
      * @todo Include any applicable annotation from WSDL
      */
-    private function _generateServicePHP($service) 
+    private function _generateServicePHP($service)
     {
-        $return = 'namespace WSDLI;'."\n\n";
+        $return = '';
+        if (!is_null($this->_OutputNamespace)) {
+          $return .= 'namespace ' . $this->_OutputNamespace . ';' . "\n\n";
+        }
         $return .= '/**'."\n";
         $return .= ' * '.$service->getAttribute("validatedName")."\n";
         $return .= ' * @author WSDLInterpreter'."\n";
@@ -432,57 +559,61 @@ class WSDLInterpreter
         $return .= "class ".$service->getAttribute("validatedName")." extends \SoapClient {\n";
 
         if (sizeof($this->_classmap) > 0) {
-            $return .= "\t".'/**'."\n";
-            $return .= "\t".' * Default class map for wsdl=>php'."\n";
-            $return .= "\t".' * @access private'."\n";
-            $return .= "\t".' * @var array'."\n";
-            $return .= "\t".' */'."\n";
-            $return .= "\t".'private static $classmap = array('."\n";
-            foreach ($this->_classmap as $className => $validClassName)    {
-                $return .= "\t\t".'"'.$className.'" => "'.$validClassName.'",'."\n";
+            $namespace = '';
+            if (!is_null($this->_OutputNamespace)) {
+              $namespace = $this->_OutputNamespace . '\\\\Types\\\\';
             }
-            $return .= "\t);\n\n";
+            $return .= $this->_OutputIndent .'/**'."\n";
+            $return .= $this->_OutputIndent .' * Default class map for wsdl=>php'."\n";
+            $return .= $this->_OutputIndent .' * @access private'."\n";
+            $return .= $this->_OutputIndent .' * @var array'."\n";
+            $return .= $this->_OutputIndent .' */'."\n";
+            $return .= $this->_OutputIndent .'private static $classmap = array('."\n";
+            foreach ($this->_classmap as $className => $validClassName)    {
+                $return .= $this->_OutputIndent . $this->_OutputIndent . '"'.$className.'" => "'.$namespace.$validClassName.'",'."\n";
+            }
+            $return .= $this->_OutputIndent . ");\n\n";
         }
         
-        $return .= "\t".'/**'."\n";
-        $return .= "\t".' * Constructor using wsdl location and options array'."\n";
-        $return .= "\t".' * @param string $wsdl WSDL location for this service'."\n";
-        $return .= "\t".' * @param array $options Options for the SoapClient'."\n";
-        $return .= "\t".' */'."\n";
-        $return .= "\t".'public function __construct($wsdl="'.
+        $return .= $this->_OutputIndent .'/**'."\n";
+        $return .= $this->_OutputIndent .' * Constructor using wsdl location and options array'."\n";
+        $return .= $this->_OutputIndent .' * @param string $wsdl WSDL location for this service'."\n";
+        $return .= $this->_OutputIndent .' * @param array $options Options for the SoapClient'."\n";
+        $return .= $this->_OutputIndent .' */'."\n";
+        $return .= $this->_OutputIndent .'public function __construct($wsdl="'.
             $this->_wsdl.'", $options=array()) {'."\n";
-        $return .= "\t\t".'foreach(self::$classmap as $wsdlClassName => $phpClassName) {'."\n";
-        $return .= "\t\t".'    if(!isset($options[\'classmap\'][$wsdlClassName])) {'."\n";
-        $return .= "\t\t".'        $options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";'."\n";
-        $return .= "\t\t".'    }'."\n";
-        $return .= "\t\t".'}'."\n";
-        $return .= "\t\t".'parent::__construct($wsdl, $options);'."\n";
-        $return .= "\t}\n\n";
-        $return .= "\t".'/**'."\n";
-        $return .= "\t".' * Checks if an argument list matches against a valid '.
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach(self::$classmap as $wsdlClassName => $phpClassName) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    if(!isset($options[\'classmap\'][$wsdlClassName])) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '        $options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    }'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'parent::__construct($wsdl, $options);'."\n";
+        $return .= $this->_OutputIndent . "}\n\n";
+        $return .= $this->_OutputIndent .'/**'."\n";
+        $return .= $this->_OutputIndent .' * Checks if an argument list matches against a valid '.
             'argument type list'."\n";
-        $return .= "\t".' * @param array $arguments The argument list to check'."\n";
-        $return .= "\t".' * @param array $validParameters A list of valid argument '.
+        $return .= $this->_OutputIndent .' * @param array $arguments The argument list to check'."\n";
+        $return .= $this->_OutputIndent .' * @param array $validParameters A list of valid argument '.
             'types'."\n";
-        $return .= "\t".' * @return boolean true if arguments match against '.
+        $return .= $this->_OutputIndent .' * @return boolean true if arguments match against '.
             'validParameters'."\n";
-        $return .= "\t".' * @throws \Exception invalid function signature message'."\n"; 
-        $return .= "\t".' */'."\n";
-        $return .= "\t".'public function _checkArguments($arguments, $validParameters) {'."\n";
-        $return .= "\t\t".'$variables = "";'."\n";
-        $return .= "\t\t".'foreach ($arguments as $arg) {'."\n";
-        $return .= "\t\t".'    $type = gettype($arg);'."\n";
-        $return .= "\t\t".'    if ($type == "object") {'."\n";
-        $return .= "\t\t".'        $type = preg_replace(\'/^\'.__NAMESPACE__.\'\\\\\/\', \'\', get_class($arg));'."\n";
-        $return .= "\t\t".'    }'."\n";
-        $return .= "\t\t".'    $variables .= "(".$type.")";'."\n";
-        $return .= "\t\t".'}'."\n";
-        $return .= "\t\t".'if (!in_array($variables, $validParameters)) {'."\n";
-        $return .= "\t\t".'    throw new \Exception("Invalid parameter types: '.
+        $return .= $this->_OutputIndent .' * @throws \Exception invalid function signature message'."\n";
+        $return .= $this->_OutputIndent .' */'."\n";
+        $return .= $this->_OutputIndent .'public function _checkArguments($arguments, $validParameters) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '$variables = "";'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach ($arguments as $arg) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    $type = gettype($arg);'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    if ($type == "object") {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '        $type = preg_replace(\'/^\'.__NAMESPACE__.\'\\\\\/\', \'\', get_class($arg));'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    }'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    $variables .= "(".$type.")";'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'if (!in_array($variables, $validParameters)) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '    throw new \Exception("Invalid parameter types: '.
             '".str_replace(")(", ", ", $variables));'."\n";
-        $return .= "\t\t".'}'."\n";
-        $return .= "\t\t".'return true;'."\n";
-        $return .= "\t}\n\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'return true;'."\n";
+        $return .= $this->_OutputIndent . "}\n\n";
 
         $functionMap = array();        
         $functions = $service->getElementsByTagName("function");
@@ -516,10 +647,16 @@ class WSDLInterpreter
      */    
     private function _generateServiceFunctionPHP($functionName, $functionNodeList) 
     {
+        $namespace = '';
+        if (!is_null($this->_OutputNamespace)) {
+          $namespace = '\\' . $this->_OutputNamespace . '\\Types\\';
+        }
         $return = "";
-        $return .= "\t".'/**'."\n";
-        $return .= "\t".' * Service Call: '.$functionName."\n";
+        $return .= $this->_OutputIndent .'/**'."\n";
+        $return .= $this->_OutputIndent .' * Service Call: '.$functionName."\n";
         $parameterComments = array();
+        $parameterNames = array();
+        $parameterRawTypes = array();
         $variableTypeOptions = array();
         $returnOptions = array();
         foreach ($functionNodeList as $functionNode) {
@@ -529,17 +666,29 @@ class WSDLInterpreter
                 $parameterTypes = "";
                 $parameterList = array();
                 foreach ($parameters as $parameter) {
+                    $parameterName = $parameter->getAttribute("validatedName");
+                    $parameterNames[] = $parameterName;
                     if (substr($parameter->getAttribute("type"), 0, -2) == "[]") {
+                        $parameterRawTypes[] = 'array';
                         $parameterTypes .= "(array)";
                     } else {
+                        $parameterRawTypes[] = $parameter->getAttribute("type");
                         $parameterTypes .= "(".$parameter->getAttribute("type").")";
                     }
                     $parameterList[] = "(".$parameter->getAttribute("type").") ".
-                        $parameter->getAttribute("validatedName");
+                        $parameterName;
+
+
+
+                  $newdoc = new DOMDocument();
+                  $cloned = $parameter->cloneNode(TRUE);
+                  $newdoc->appendChild($newdoc->importNode($cloned,TRUE));
+                  $x = $newdoc->saveHTML();
+                  $y = 1;
                 }
                 if (sizeof($parameterList) > 0) {
                     $variableTypeOptions[] = $parameterTypes;
-                    $parameterComments[] = "\t".' * '.join(", ", $parameterList);
+                    $parameterComments[] = $this->_OutputIndent .' * '.join(", ", $parameterList);
                 }
             }
             $returns = $functionNode->getElementsByTagName("returns");
@@ -550,23 +699,36 @@ class WSDLInterpreter
                 }
             }
         }
-        $return .= "\t".' * Parameter options:'."\n";
+        $return .= $this->_OutputIndent .' * Parameter options:'."\n";
         $return .= join("\n", $parameterComments)."\n";
-        $return .= "\t".' * @param mixed,... See function description for parameter options'."\n";
-        $return .= "\t".' * @return '.join("|", array_unique($returnOptions))."\n";
-        $return .= "\t".' * @throws \Exception invalid function signature message'."\n"; 
-        $return .= "\t".' */'."\n";
-        $return .= "\t".'public function '.$functionName.'($mixed = null) {'."\n";
-        $return .= "\t\t".'$validParameters = array('."\n";
-        foreach ($variableTypeOptions as $variableTypeOption) {
-            $return .= "\t\t\t".'"'.$variableTypeOption.'",'."\n";
+        $return .= $this->_OutputIndent .' * @param mixed,... See function description for parameter options'."\n";
+        $return .= $this->_OutputIndent .' * @return '.join("|", array_unique($returnOptions))."\n";
+        $return .= $this->_OutputIndent .' * @throws \Exception invalid function signature message'."\n";
+        $return .= $this->_OutputIndent .' */'."\n";
+        if (!$this->_outputExpandMethodArguments) {
+          $return .= $this->_OutputIndent .'public function '.$functionName.'($mixed = null) {'."\n";
         }
-        $return .= "\t\t".');'."\n";
-        $return .= "\t\t".'$args = func_get_args();'."\n";
-        $return .= "\t\t".'$this->_checkArguments($args, $validParameters);'."\n";
-        $return .= "\t\t".'return $this->__soapCall("'.
+        else {
+          $methodParameters = $parameterNames;
+          array_walk($methodParameters, function(&$v, $k) use ($parameterRawTypes, $namespace) {
+            $v = '$' . $v;
+            // If the type is in the class map add a data typing to the arg.
+            if (isset($this->_classmap[$parameterRawTypes[$k]])) {
+              $v = $namespace . $parameterRawTypes[$k] . ' ' . $v;
+            }
+          });
+          $return .= $this->_OutputIndent .'public function '.$functionName.'(' . implode(', ', $methodParameters) . ') {'."\n";
+        }
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '$validParameters = array('."\n";
+        foreach ($variableTypeOptions as $variableTypeOption) {
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent .'"'.$variableTypeOption.'",'."\n";
+        }
+        $return .= $this->_OutputIndent . $this->_OutputIndent . ');'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '$args = func_get_args();'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . '$this->_checkArguments($args, $validParameters);'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . 'return $this->__soapCall("'.
             $functionNodeList[0]->getAttribute("name").'", $args);'."\n";
-        $return .= "\t".'}'."\n";
+        $return .= $this->_OutputIndent .'}'."\n";
         
         return $return;
     }
@@ -585,41 +747,124 @@ class WSDLInterpreter
      */
     public function savePHP($outputDirectory) 
     {
+        $this->_loadClasses();
+        $this->_loadServices();
+
         if (sizeof($this->_servicePHPSources) == 0) {
             throw new WSDLInterpreterException("No services loaded");
         }
-        
-        $outputDirectory = rtrim($outputDirectory,"/");
-        
-        $outputFiles = array();
-        
-        if(!is_dir($outputDirectory."/")) {
-            mkdir($outputDirectory."/");
-        }
-        
-        if(!is_dir($outputDirectory."/classes/")) {
-            mkdir($outputDirectory."/classes/");
-        }
-        
-        foreach($this->_classPHPSources as $className => $classCode) {
-            $filename = $outputDirectory."/classes/".$className.".class.php";
-            if (file_put_contents($filename, "<?php\n\n".$classCode)) {
-                $outputFiles[] = $filename;
-            }
-        }
-        
-        foreach ($this->_servicePHPSources as $serviceName => $serviceCode) {
-            $filename = $outputDirectory."/".$serviceName.".php";
-            if (file_put_contents($filename, "<?php\n\n".$serviceCode)) {
-                $outputFiles[] = $filename;
-            }
-        }
-        
-        if (sizeof($outputFiles) == 0) {
-            throw new WSDLInterpreterException("Error writing PHP source files.");
+
+        switch($this->_outputAutoloaderStructure) {
+          case self::AUTOLOADER_WSDLI:
+          default:
+            $outputFiles = $this->_savePHP_WSDLI($outputDirectory);
+            break;
+
+          case self::AUTOLOADER_PSR4:
+            $outputFiles = $this->_savePHP_PSR4($outputDirectory);
+            break;
+
+          case self::AUTOLOADER_SINGLE_FILE:
+            $outputFiles = $this->_savePHP_SingleFile($outputDirectory);
+            break;
         }
         
         return $outputFiles;
+    }
+
+    protected function _savePHP_WSDLI ($outputDirectory) {
+      $outputDirectory = rtrim($outputDirectory,"/");
+
+      $outputFiles = array();
+
+      if(!is_dir($outputDirectory."/")) {
+        mkdir($outputDirectory."/");
+      }
+
+      if(!is_dir($outputDirectory."/classes/")) {
+        mkdir($outputDirectory."/classes/");
+      }
+
+      foreach($this->_classPHPSources as $className => $classCode) {
+        $filename = $outputDirectory."/classes/".$className.".class.php";
+        if (file_put_contents($filename, "<?php\n\n".$classCode)) {
+          $outputFiles[] = $filename;
+        }
+      }
+
+      foreach ($this->_servicePHPSources as $serviceName => $serviceCode) {
+        $filename = $outputDirectory."/".$serviceName.".php";
+        if (file_put_contents($filename, "<?php\n\n".$serviceCode)) {
+          $outputFiles[] = $filename;
+        }
+      }
+
+      if (sizeof($outputFiles) == 0) {
+        throw new WSDLInterpreterException("Error writing PHP source files.");
+      }
+      return $outputFiles;
+    }
+
+    protected function _savePHP_PSR4 ($outputDirectory) {
+      $outputDirectory = rtrim($outputDirectory,"/");
+
+      $outputFiles = array();
+
+      if(!is_dir($outputDirectory . "/")) {
+        mkdir($outputDirectory . "/");
+      }
+
+      foreach($this->_classPHPSources as $className => $classCode) {
+
+        if(!is_dir($outputDirectory . "/Type/")) {
+          mkdir($outputDirectory . "/Type/");
+        }
+
+        $filename = $outputDirectory . "/Type/" . $className . ".php";
+        if (file_put_contents($filename, "<?php\n\n" . $classCode)) {
+          $outputFiles[] = $filename;
+        }
+      }
+
+      foreach ($this->_servicePHPSources as $serviceName => $serviceCode) {
+        $filename = $outputDirectory . "/" . $serviceName . ".php";
+        if (file_put_contents($filename, "<?php\n\n" . $serviceCode)) {
+          $outputFiles[] = $filename;
+        }
+      }
+
+      if (sizeof($outputFiles) == 0) {
+        throw new WSDLInterpreterException("Error writing PHP source files.");
+      }
+      return $outputFiles;
+    }
+
+    protected function _savePHP_SingleFile($outputDirectory) {
+      $outputDirectory = rtrim($outputDirectory,"/");
+
+      $outputFiles = array();
+
+      if(!is_dir($outputDirectory."/")) {
+        mkdir($outputDirectory."/");
+      }
+
+      $name = parse_url($this->_wsdl, PHP_URL_HOST);
+      $filename = $outputDirectory . "/" . $name . ".php";
+      $outputFiles[] = $filename;
+      file_put_contents($filename, "<?php\n\n");
+
+      foreach($this->_classPHPSources as $className => $classCode) {
+        file_put_contents($filename, $classCode, FILE_APPEND);
+      }
+
+      foreach ($this->_servicePHPSources as $serviceName => $serviceCode) {
+        file_put_contents($filename, $serviceCode, FILE_APPEND);
+      }
+
+      if (sizeof($outputFiles) == 0) {
+        throw new WSDLInterpreterException("Error writing PHP source files.");
+      }
+      return $outputFiles;
     }
 }
 ?>
