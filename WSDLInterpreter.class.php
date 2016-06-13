@@ -156,7 +156,7 @@ class WSDLInterpreter
     {
         try {
             $this->_wsdl = $wsdl;
-            $this->_OutputNamespace = $namespace;
+            $this->setOutputNamespace($namespace);
             $this->_outputAutoloaderStructure = $autoloader;
             $this->_client = new SoapClient($this->_wsdl);
             
@@ -227,7 +227,8 @@ class WSDLInterpreter
      * @param string $wsdl  the Namespace for the output.
      */
     public function setOutputNamespace($namespace) {
-      $this->_OutputNamespace = $namespace;
+      // Remove leading backslash.
+      $this->_OutputNamespace = ltrim($namespace, '\\');
     }
 
     /**
@@ -613,11 +614,13 @@ class WSDLInterpreter
         $return .= $this->_OutputIndent .' */'."\n";
         $return .= $this->_OutputIndent .'public function __construct($wsdl="'.
             $this->_wsdl.'", $options=array()) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach(self::$classmap as $wsdlClassName => $phpClassName) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . 'if(!isset($options[\'classmap\'][$wsdlClassName])) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
+        if (!$this->_outputSkipArgumentCheck) {
+            $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach(self::$classmap as $wsdlClassName => $phpClassName) {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . 'if(!isset($options[\'classmap\'][$wsdlClassName])) {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '}' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '}' . "\n";
+        }
         $return .= $this->_OutputIndent . $this->_OutputIndent . 'parent::__construct($wsdl, $options);'."\n";
         $return .= $this->_OutputIndent . "}\n\n";
         if (!$this->_outputSkipArgumentCheck) {
@@ -855,11 +858,11 @@ class WSDLInterpreter
 
       foreach($this->_classPHPSources as $className => $classCode) {
 
-        if(!is_dir($outputDirectory . "/Type/")) {
-          mkdir($outputDirectory . "/Type/");
+        if(!is_dir($outputDirectory . "/Types/")) {
+          mkdir($outputDirectory . "/Types/");
         }
 
-        $filename = $outputDirectory . "/Type/" . $className . ".php";
+        $filename = $outputDirectory . "/Types/" . $className . ".php";
         if (file_put_contents($filename, "<?php\n\n" . $classCode)) {
           $outputFiles[] = $filename;
         }
