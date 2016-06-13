@@ -126,13 +126,22 @@ class WSDLInterpreter
      */
     private $_outputAutoloaderStructure = self::AUTOLOADER_PSR4;
 
-
     /**
      * If enabled the arguments for the methods are explicitly defined.
      * @var bool
      */
     private $_outputExpandMethodArguments = false;
-    
+
+    /**
+     * If enabled the method arguments aren't checked.
+     *
+     * It's recommended to use this if you use ExpandMethodArguments as this
+     * will check complex types automatically.
+     *
+     * @var bool
+     */
+    private $_outputSkipArgumentCheck = false;
+
     /**
      * Parses the target wsdl and loads the interpretation into object members
      * 
@@ -263,7 +272,7 @@ class WSDLInterpreter
      *
      * @return string the autloader structure.
      */
-    public function getAutoloader($namespace) {
+    public function getAutoloader() {
       $this->_outputAutoloaderStructure;
     }
 
@@ -283,8 +292,31 @@ class WSDLInterpreter
      *
      * @return bool
      */
-    public function getExpandMethodArguments($namespace) {
+    public function getExpandMethodArguments() {
       $this->_outputExpandMethodArguments;
+    }
+
+    /**
+     * Set the skip argument check flag.
+     *
+     * If enabled the method arguments aren't checked using the generic
+     * inspection.
+     * It's recommended to use this if you use ExpandMethodArguments as this
+     * will check complex types automatically.
+     *
+     * @param bool $skipArgumentCheck
+     */
+    public function setSkipArgumentCheck($skipArgumentCheck) {
+      $this->_outputSkipArgumentCheck = (bool) $skipArgumentCheck;
+    }
+
+    /**
+     * Get the skip argument check flag.
+     *
+     * @return bool
+     */
+    public function getSkipArgumentCheck() {
+      $this->_outputSkipArgumentCheck;
     }
 
     /**
@@ -461,10 +493,9 @@ class WSDLInterpreter
         $properties = $class->getElementsByTagName("entry");
         foreach ($properties as $property) {
             $return .= $this->_OutputIndent . "/**\n"
-                     . $this->_OutputIndent . " * @access public\n"
                      . $this->_OutputIndent . " * @var ".$property->getAttribute("type")."\n"
                      . $this->_OutputIndent . " */\n"
-                     . $this->_OutputIndent .'public $'.$property->getAttribute("validatedName").";\n";
+                     . $this->_OutputIndent .'public $'.$property->getAttribute("validatedName").";\n\n";
         }
     
         $extraParams = false;
@@ -477,7 +508,7 @@ class WSDLInterpreter
                     '" => "'.$property->getAttribute("validatedName").'",'."\n";
             }
         }
-        $paramMapReturn .= $this->_OutputIndent .');'."\n";
+        $paramMapReturn .= $this->_OutputIndent .');'."\n\n";
         $paramMapReturn .= $this->_OutputIndent .'/**'."\n";
         $paramMapReturn .= $this->_OutputIndent .' * Provided for setting non-php-standard named variables'."\n";
         $paramMapReturn .= $this->_OutputIndent .' * @param $var Variable name to set'."\n";
@@ -497,7 +528,7 @@ class WSDLInterpreter
             $return .= $paramMapReturn;
         }
     
-        $return .= "}";
+        $return .= "}\n";
         return $return;
     }
     
@@ -558,7 +589,7 @@ class WSDLInterpreter
         $return .= ' */'."\n";
         $return .= "class ".$service->getAttribute("validatedName")." extends \SoapClient {\n";
 
-        if (sizeof($this->_classmap) > 0) {
+        if (sizeof($this->_classmap) > 0 && !$this->_outputSkipArgumentCheck) {
             $namespace = '';
             if (!is_null($this->_OutputNamespace)) {
               $namespace = $this->_OutputNamespace . '\\\\Types\\\\';
@@ -583,38 +614,39 @@ class WSDLInterpreter
         $return .= $this->_OutputIndent .'public function __construct($wsdl="'.
             $this->_wsdl.'", $options=array()) {'."\n";
         $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach(self::$classmap as $wsdlClassName => $phpClassName) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    if(!isset($options[\'classmap\'][$wsdlClassName])) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '        $options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    }'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . 'if(!isset($options[\'classmap\'][$wsdlClassName])) {'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$options[\'classmap\'][$wsdlClassName] = "\\\".__NAMESPACE__."\\\$phpClassName";'."\n";
+        $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
         $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
         $return .= $this->_OutputIndent . $this->_OutputIndent . 'parent::__construct($wsdl, $options);'."\n";
         $return .= $this->_OutputIndent . "}\n\n";
-        $return .= $this->_OutputIndent .'/**'."\n";
-        $return .= $this->_OutputIndent .' * Checks if an argument list matches against a valid '.
-            'argument type list'."\n";
-        $return .= $this->_OutputIndent .' * @param array $arguments The argument list to check'."\n";
-        $return .= $this->_OutputIndent .' * @param array $validParameters A list of valid argument '.
-            'types'."\n";
-        $return .= $this->_OutputIndent .' * @return boolean true if arguments match against '.
-            'validParameters'."\n";
-        $return .= $this->_OutputIndent .' * @throws \Exception invalid function signature message'."\n";
-        $return .= $this->_OutputIndent .' */'."\n";
-        $return .= $this->_OutputIndent .'public function _checkArguments($arguments, $validParameters) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '$variables = "";'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach ($arguments as $arg) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    $type = gettype($arg);'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    if ($type == "object") {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '        $type = preg_replace(\'/^\'.__NAMESPACE__.\'\\\\\/\', \'\', get_class($arg));'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    }'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    $variables .= "(".$type.")";'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . 'if (!in_array($variables, $validParameters)) {'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '    throw new \Exception("Invalid parameter types: '.
-            '".str_replace(")(", ", ", $variables));'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '}'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . 'return true;'."\n";
-        $return .= $this->_OutputIndent . "}\n\n";
-
+        if (!$this->_outputSkipArgumentCheck) {
+            $return .= $this->_OutputIndent . '/**' . "\n";
+            $return .= $this->_OutputIndent . ' * Checks if an argument list matches against a valid ' .
+              'argument type list' . "\n";
+            $return .= $this->_OutputIndent . ' * @param array $arguments The argument list to check' . "\n";
+            $return .= $this->_OutputIndent . ' * @param array $validParameters A list of valid argument ' .
+              'types' . "\n";
+            $return .= $this->_OutputIndent . ' * @return boolean true if arguments match against ' .
+              'validParameters' . "\n";
+            $return .= $this->_OutputIndent . ' * @throws \Exception invalid function signature message' . "\n";
+            $return .= $this->_OutputIndent . ' */' . "\n";
+            $return .= $this->_OutputIndent . 'public function _checkArguments($arguments, $validParameters) {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '$variables = "";' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . 'foreach ($arguments as $arg) {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$type = gettype($arg);' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . 'if ($type == "object") {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$type = preg_replace(\'/^\'.__NAMESPACE__.\'\\\\\/\', \'\', get_class($arg));' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '}' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . '$variables .= "(".$type.")";' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '}' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . 'if (!in_array($variables, $validParameters)) {' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent . 'throw new \Exception("Invalid parameter types: ' .
+              '".str_replace(")(", ", ", $variables));' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '}' . "\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . 'return true;' . "\n";
+            $return .= $this->_OutputIndent . "}\n\n";
+        }
         $functionMap = array();        
         $functions = $service->getElementsByTagName("function");
         foreach ($functions as $function) {
@@ -654,6 +686,7 @@ class WSDLInterpreter
         $return = "";
         $return .= $this->_OutputIndent .'/**'."\n";
         $return .= $this->_OutputIndent .' * Service Call: '.$functionName."\n";
+        $return .= $this->_OutputIndent ." *\n";
         $parameterComments = array();
         $parameterNames = array();
         $parameterRawTypes = array();
@@ -677,14 +710,6 @@ class WSDLInterpreter
                     }
                     $parameterList[] = "(".$parameter->getAttribute("type").") ".
                         $parameterName;
-
-
-
-                  $newdoc = new DOMDocument();
-                  $cloned = $parameter->cloneNode(TRUE);
-                  $newdoc->appendChild($newdoc->importNode($cloned,TRUE));
-                  $x = $newdoc->saveHTML();
-                  $y = 1;
                 }
                 if (sizeof($parameterList) > 0) {
                     $variableTypeOptions[] = $parameterTypes;
@@ -695,37 +720,51 @@ class WSDLInterpreter
             if ($returns->length > 0) {
                 $returns = $returns->item(0)->getElementsByTagName("entry");
                 if ($returns->length > 0) {
-                    $returnOptions[] = $returns->item(0)->getAttribute("type");
+                    $returnOption = $returns->item(0)->getAttribute("type");
+                    // If the type is in the class map add a data typing to the arg.
+                    if (isset($this->_classmap[$returnOption])) {
+                      $returnOption = $namespace . $returnOption;
+                    }
+                    $returnOptions[] = $returnOption;
                 }
             }
         }
-        $return .= $this->_OutputIndent .' * Parameter options:'."\n";
-        $return .= join("\n", $parameterComments)."\n";
-        $return .= $this->_OutputIndent .' * @param mixed,... See function description for parameter options'."\n";
-        $return .= $this->_OutputIndent .' * @return '.join("|", array_unique($returnOptions))."\n";
-        $return .= $this->_OutputIndent .' * @throws \Exception invalid function signature message'."\n";
-        $return .= $this->_OutputIndent .' */'."\n";
+
         if (!$this->_outputExpandMethodArguments) {
-          $return .= $this->_OutputIndent .'public function '.$functionName.'($mixed = null) {'."\n";
+          $func_params = '$mixed = null';
+          $return .= $this->_OutputIndent .' * Parameter options:'."\n";
+          $return .= join("\n", $parameterComments)."\n";
+          $return .= $this->_OutputIndent . ' * @param mixed,... See function description for parameter options' . "\n";
         }
         else {
-          $methodParameters = $parameterNames;
-          array_walk($methodParameters, function(&$v, $k) use ($parameterRawTypes, $namespace) {
-            $v = '$' . $v;
+          $methodParameters = array();
+          foreach ($parameterNames as $k => $v) {
+            $methodParameters[$k] = '$' . $v;
+            $type = $parameterRawTypes[$k];
             // If the type is in the class map add a data typing to the arg.
-            if (isset($this->_classmap[$parameterRawTypes[$k]])) {
-              $v = $namespace . $parameterRawTypes[$k] . ' ' . $v;
+            if (isset($this->_classmap[$type])) {
+              $type = $namespace . $type;
+              $methodParameters[$k] = $type . ' ' . $methodParameters[$k];
             }
-          });
-          $return .= $this->_OutputIndent .'public function '.$functionName.'(' . implode(', ', $methodParameters) . ') {'."\n";
+            $return .= $this->_OutputIndent .' * @param ' . $type . ' $' . $v ."\n";
+          }
+          $func_params = implode(', ', $methodParameters);
         }
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '$validParameters = array('."\n";
-        foreach ($variableTypeOptions as $variableTypeOption) {
-            $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent .'"'.$variableTypeOption.'",'."\n";
-        }
-        $return .= $this->_OutputIndent . $this->_OutputIndent . ');'."\n";
+        $return .= $this->_OutputIndent ." *\n";
+        $return .= $this->_OutputIndent .' * @return '.join("|", array_unique($returnOptions))."\n";
+        $return .= $this->_OutputIndent ." *\n";
+        $return .= $this->_OutputIndent .' * @throws \Exception invalid function signature message'."\n";
+        $return .= $this->_OutputIndent .' */'."\n";
+        $return .= $this->_OutputIndent .'public function '.$functionName.'(' . $func_params . ') {'."\n";
         $return .= $this->_OutputIndent . $this->_OutputIndent . '$args = func_get_args();'."\n";
-        $return .= $this->_OutputIndent . $this->_OutputIndent . '$this->_checkArguments($args, $validParameters);'."\n";
+        if (!$this->_outputSkipArgumentCheck) {
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '$validParameters = array('."\n";
+            foreach ($variableTypeOptions as $variableTypeOption) {
+                $return .= $this->_OutputIndent . $this->_OutputIndent . $this->_OutputIndent .'"'.$variableTypeOption.'",'."\n";
+            }
+            $return .= $this->_OutputIndent . $this->_OutputIndent . ');'."\n";
+            $return .= $this->_OutputIndent . $this->_OutputIndent . '$this->_checkArguments($args, $validParameters);' . "\n";
+        }
         $return .= $this->_OutputIndent . $this->_OutputIndent . 'return $this->__soapCall("'.
             $functionNodeList[0]->getAttribute("name").'", $args);'."\n";
         $return .= $this->_OutputIndent .'}'."\n";
